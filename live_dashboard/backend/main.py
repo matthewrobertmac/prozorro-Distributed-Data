@@ -41,8 +41,34 @@ CPV_ENERGY         = {"09","31","65"}
 CPV_FOOD           = {"03","15"}
 CPV_RECONSTRUCTION = {"45","44","43"}
 
+# ── Ukrainian public holidays (month, day) for FLAG_IS_UKRAINIAN_HOLIDAY_PUBLISH ──
+UKR_HOLIDAYS = {
+    (1,1),(1,7),(3,8),(5,1),(5,9),(6,28),(8,24),(10,14),(12,25)
+}
+
+# ── Label encoding maps matching the training pipeline ──
+# LabelEncoder / pd.factorize with sort=True produces alphabetical ordering.
+# These maps MUST match the integer codes in the LightGBM tree splits.
+LABEL_ENCODE_PROCUREMENT_METHOD = {"limited": 0, "open": 1, "selective": 2}
+LABEL_ENCODE_PROCUREMENT_METHOD_TYPE = {
+    "aboveThreshold": 0, "aboveThresholdEU": 1, "aboveThresholdUA": 2,
+    "aboveThresholdUA.defense": 3, "belowThreshold": 4,
+    "closeFrameworkAgreementSelectionUA": 5, "closeFrameworkAgreementUA": 6,
+    "competitiveDialogueEU": 7, "competitiveDialogueEU.stage2": 8,
+    "competitiveDialogueUA": 9, "competitiveDialogueUA.stage2": 10,
+    "competitiveOrdering": 11, "esco": 12, "negotiation": 13,
+    "negotiation.quick": 14, "priceQuotation": 15, "reporting": 16,
+    "requestForProposal": 17, "simple.defense": 18,
+}
+LABEL_ENCODE_PROCURER_KIND = {
+    "0000000": 0, "authority": 1, "central": 2, "defense": 3,
+    "general": 4, "other": 5, "social": 6, "special": 7,
+}
+# Regions — too many variants (258); let LightGBM handle NaN for this feature
+
 def cpv_flag(cpv2: str, groups: set) -> bool:
     return cpv2 in groups
+
 
 def engineer_features(t: dict) -> dict:
     """Extract model features from raw Prozorro API tender dict."""
@@ -93,17 +119,42 @@ def engineer_features(t: dict) -> dict:
 
     kind = ent.get("kind","")
 
+    # Large lot count: items with amount > 1M UAH
+    large_lots = 0
+    for i in items:
+        q = i.get("quantity", 0) or 0
+        u = (i.get("unit") or {}).get("value") or {}
+        item_amt = float(u.get("amount", 0) or 0) * float(q or 1)
+        if item_amt > 1_000_000:
+            large_lots += 1
+
+    # Ukrainian holiday flag
+    is_holiday = (dt.month, dt.day) in UKR_HOLIDAYS
+
+    # Tender period ratio to peer median (approximate: use 336h = 14 days as proxy)
+    PEER_MEDIAN_HOURS = 336.0
+    tend_ratio = (tend_h / PEER_MEDIAN_HOURS) if tend_h else None
+
+    # Below-threshold flag and non-price criteria
+    below_threshold = method in ("belowThreshold",)
+    criteria = t.get("awardCriteria", "")
+    non_price = criteria not in ("", "lowestCost")
+
     return {
-        "PROCUREMENT_METHOD_TYPE": method,
-        "PROCUREMENT_METHOD":      proc_method,
+        "PROCUREMENT_METHOD_TYPE": LABEL_ENCODE_PROCUREMENT_METHOD_TYPE.get(method, float("nan")),
+        "PROCUREMENT_METHOD":      LABEL_ENCODE_PROCUREMENT_METHOD.get(proc_method, float("nan")),
+        "FLAG_BELOW_THRESHOLD_WITH_BIDDING": below_threshold,
+        "FLAG_NON_PRICE_AWARD_CRITERIA": non_price,
         "FLAG_RESTRICTED_PROCEDURE": proc_method in ("selective","limited"),
         "FLAG_NO_CALL_FOR_TENDER":   proc_method == "limited",
         "SIGNAL_ENQUIRY_PERIOD_HOURS": enq_h,
         "SIGNAL_TENDER_PERIOD_HOURS":  tend_h,
         "SIGNAL_ENQUIRY_PERIOD_BELOW_LEGAL_MIN": (enq_h is not None and enq_h < 120),
         "SIGNAL_TENDER_PERIOD_BELOW_LEGAL_MIN":  (tend_h is not None and tend_h < 120),
+        "SIGNAL_TENDER_PERIOD_RATIO_TO_PEER_MEDIAN": tend_ratio,
         "FLAG_IS_DECEMBER_PUBLISH":    dt.month == 12,
         "FLAG_IS_YEAR_BOUNDARY_PUBLISH": dt.month in (12, 1),
+        "FLAG_IS_UKRAINIAN_HOLIDAY_PUBLISH": is_holiday,
         "FLAG_IS_WARTIME_REGIME":       dt >= WARTIME_START,
         "FLAG_IS_WARTIME_SIMPLIFIED":   dt >= WARTIME_START,
         "VALUE_AMOUNT": amount,
@@ -112,7 +163,8 @@ def engineer_features(t: dict) -> dict:
         "FLAG_NEAR_THRESHOLD_CLUSTER":  near_thresh is not None,
         "SIGNAL_ITEM_COUNT":      len(items),
         "SIGNAL_CPV_HETEROGENEITY": len(unique_cpv2),
-        "STAT_PRIMARY_CPV_4DIGIT":  primary_cpv4,
+        "SIGNAL_LARGE_LOT_COUNT": large_lots,
+        "STAT_PRIMARY_CPV_4DIGIT":  float(primary_cpv4) if primary_cpv4 and primary_cpv4.isdigit() else float("nan"),
         "FLAG_MISSING_TENDER_DOCUMENTATION": not bool(t.get("documents")),
         "FLAG_DESCRIPTION_LENGTH_SUSPICIOUS": len(t.get("description","")) < 20,
         "FLAG_CPV_CONSTRUCTION":   any(cpv_flag(c, CPV_CONSTRUCTION) for c in unique_cpv2),
@@ -122,8 +174,8 @@ def engineer_features(t: dict) -> dict:
         "FLAG_CPV_ENERGY":     any(cpv_flag(c, CPV_ENERGY) for c in unique_cpv2),
         "FLAG_CPV_FOODSERVICE": any(cpv_flag(c, CPV_FOOD) for c in unique_cpv2),
         "FLAG_RECONSTRUCTION_RELATED": any(cpv_flag(c, CPV_RECONSTRUCTION) for c in unique_cpv2),
-        "PROCURER_KIND":   kind,
-        "PROCURER_REGION": addr.get("region",""),
+        "PROCURER_KIND":   LABEL_ENCODE_PROCURER_KIND.get(kind, float("nan")),
+        "PROCURER_REGION": float("nan"),  # 258+ region variants; NaN handled by LightGBM
         "FLAG_PROCURER_DEFENSE":   kind == "defense",
         "FLAG_PROCURER_MUNICIPAL": kind in ("general","authority"),
     }
@@ -437,6 +489,13 @@ async def get_live_tenders(limit: int = 50, date_from: str = "", proc_method: st
     else:
         scores = result
 
+    import math
+    def _safe(v):
+        """Replace NaN/Inf with None for JSON serialization."""
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+
     output = []
     for t, feat, score in zip(results, raw_features, scores):
         bids = t.get("bids") or []
@@ -468,12 +527,12 @@ async def get_live_tenders(limit: int = 50, date_from: str = "", proc_method: st
             "href":        f"https://prozorro.gov.ua/tender/{t['id']}",
             "method":      t.get("procurementMethodType",""),
             "status":      t.get("status",""),
-            "value_uah":   feat["VALUE_AMOUNT"],
+            "value_uah":   _safe(feat["VALUE_AMOUNT"]),
             "procurer":    (t.get("procuringEntity") or {}).get("name","")[:60],
             "procurer_en": None,
-            "region":      feat["PROCURER_REGION"],
+            "region":      _safe(feat["PROCURER_REGION"]),
             "date":        t.get("datePublished","")[:10],
-            "cpv4":        feat["STAT_PRIMARY_CPV_4DIGIT"],
+            "cpv4":        _safe(feat["STAT_PRIMARY_CPV_4DIGIT"]),
             "interpretation": interpretation,
             "item_count":  feat["SIGNAL_ITEM_COUNT"],
             "bid_count":   unique_bidders,
