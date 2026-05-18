@@ -287,7 +287,7 @@ def run_model_on_features(features_list: List[dict]) -> List[float]:
             try:
                 from snowflake.ml.registry import Registry
                 reg = Registry(session, database_name="PROZORRO", schema_name="PLATINUM")
-                mv  = reg.get_model("PLATINUM_COMPETITIVENESS_POOLED").version("V_20260513_CUSTOM")
+                mv  = reg.get_model("PLATINUM_COMPETITIVENESS_WARTIME").version("V_20260513_CUSTOM")
                 _LOCAL_MODEL_CACHE = mv.load()
             finally:
                 session.close()
@@ -300,12 +300,12 @@ def run_model_on_features(features_list: List[dict]) -> List[float]:
                 df[col] = df[col].astype(float)
             elif df[col].dtype == object:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-        # Fill missing composite features for the pooled model
+        # Fill missing composite features for the wartime model
         df["COMPOSITE_CRI_PROCEDURE_RESTRICTIVENESS"] = 0.0
         df["_PEER_GROUP_SIZE"] = 1.0
-        df["_IS_WARTIME"] = df.get("FLAG_IS_WARTIME_REGIME", 0.0)
 
-        # Keep only the columns expected by the pooled model in correct order
+        # Keep only the columns expected by the wartime model in correct order
+        # (34 features — no _IS_WARTIME since model was trained on wartime data only)
         MODEL_COLS = [
             'PROCUREMENT_METHOD', 'PROCUREMENT_METHOD_TYPE', 'FLAG_BELOW_THRESHOLD_WITH_BIDDING',
             'FLAG_NON_PRICE_AWARD_CRITERIA', 'SIGNAL_ENQUIRY_PERIOD_HOURS', 'SIGNAL_TENDER_PERIOD_HOURS',
@@ -318,7 +318,7 @@ def run_model_on_features(features_list: List[dict]) -> List[float]:
             'FLAG_CPV_IT_ELECTRONICS', 'FLAG_CPV_ENGINEERING_SERVICES', 'FLAG_CPV_ENERGY',
             'FLAG_CPV_FOODSERVICE', 'FLAG_RECONSTRUCTION_RELATED', 'PROCURER_KIND', 'PROCURER_REGION',
             'FLAG_PROCURER_DEFENSE', 'FLAG_PROCURER_MUNICIPAL', 'COMPOSITE_CRI_PROCEDURE_RESTRICTIVENESS',
-            '_PEER_GROUP_SIZE', '_IS_WARTIME'
+            '_PEER_GROUP_SIZE'
         ]
         # Add any missing columns as NaN
         for col in MODEL_COLS:
