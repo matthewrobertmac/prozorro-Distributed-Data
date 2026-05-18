@@ -10,6 +10,7 @@ const FILTERS = [
   { key: 'open', label: 'Open (Competitive)' },
   { key: 'selective', label: 'Selective (Pre-qualified)' },
   { key: 'limited', label: 'Limited (Direct)' },
+  { key: 'competitive_low', label: 'Competitive (<80% Risk)' },
 ];
 
 const ScatterTT = ({ active, payload }) => {
@@ -68,9 +69,16 @@ function App() {
     setLoading(true);
     setSelected(null);
     try {
-      const res = await axios.get('/api/tenders', { params: { limit: 50, proc_method: procFilter || undefined } });
+      // For the competitive filter, fetch open tenders then filter client-side by risk
+      const apiFilter = procFilter === 'competitive_low' ? 'open' : procFilter;
+      const res = await axios.get('/api/tenders', { params: { limit: 50, proc_method: apiFilter || undefined } });
       const data = res.data.tenders || res.data;
-      const fmt = data.map((t, idx) => ({ ...t, index: idx, score: t.risk_score ?? Math.random(), valueAmount: t.value_uah || 0 }));
+      let fmt = data.map((t, idx) => ({ ...t, index: idx, score: t.risk_score ?? Math.random(), valueAmount: t.value_uah || 0 }));
+      // Apply client-side risk filter for competitive category
+      if (procFilter === 'competitive_low') {
+        fmt = fmt.filter(t => t.score < 0.80);
+        fmt = fmt.map((t, idx) => ({ ...t, index: idx })); // re-index
+      }
       setTenders(fmt);
       if (fmt.length) setSelected(fmt[0]);
     } catch (e) { console.error(e); }

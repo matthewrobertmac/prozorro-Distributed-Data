@@ -153,8 +153,8 @@ export function ResearchSections() {
       <img src="/img/regime_shift.png" alt="Regime shift: peacetime vs wartime data structure" />
       <div className="banner-overlay">
         <div className="banner-text">
-          <h3>The February 2022 Boundary</h3>
-          <p>The invasion did not reduce predictability — it redistributed predictive signal from procedural features onto structural features harder for policy to modify. Single-bidder rates rose from ~50% to ~66%.</p>
+          <h3>The October 2022 Boundary</h3>
+          <p>Cabinet Resolution No. 1178 formalized wartime procurement simplification — it did not reduce predictability, but redistributed predictive signal from procedural features onto structural features harder for policy to modify. Single-bidder base rates: 66.2% peacetime, 60.9% wartime.</p>
         </div>
       </div>
     </div>
