@@ -597,11 +597,18 @@ async def health():
 frontend_dist = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_dist.exists():
     app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+    # Serve images and other static files from the Vite build output
+    if (frontend_dist / "img").exists():
+        app.mount("/img", StaticFiles(directory=str(frontend_dist / "img")), name="img")
     
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
         # Serve the API if requested path matches /api
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="API route not found")
-        # Otherwise serve index.html
+        # Check if the requested file exists in dist (e.g. .png, .ico, .json)
+        file_path = frontend_dist / full_path
+        if full_path and file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        # Otherwise serve index.html (SPA routing)
         return FileResponse(frontend_dist / "index.html")
