@@ -1,0 +1,33 @@
+# ── Secrets & credentials ──────────────────────────────
+.env
+*.p8
+*.pem
+*.key
+
+# ── Python ─────────────────────────────────────────────
+sf312env/
+__pycache__/
+*.pyc
+*.pyo
+.Python
+
+# ── Node / Frontend ───────────────────────────────────
+node_modules/
+live_dashboard/frontend/dist/
+
+# ── Scratch / temp files ──────────────────────────────
+patch.py
+scratch_*.py
+test_translate*.py
+relog_*.py
+rewrap_*.py
+
+# ── OS files ──────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swoscratch_App_css_prev.css
